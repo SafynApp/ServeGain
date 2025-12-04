@@ -46,8 +46,7 @@
 <script>
 const SUPABASE_URL = "https://btxevaguugwvnjtniand.supabase.co"
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0eGV2YWd1dWd3dm5qdG5pYW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MzYxOTAsImV4cCI6MjA4MDQxMjE5MH0.R2zJnMQPLmOiWtpfz94HBtoZwksF7p6Ynj6BlGHgCMo"
-const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 let recognition, isListening = false
 
 // Load today’s tally

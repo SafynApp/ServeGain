@@ -15,8 +15,7 @@
     button{background:#0066ff;color:white;border:none;cursor:pointer}
     button:active{transform:scale(0.98)}
     #voiceBtn{background:#ff4444}
-    #output{margin-top:15px;padding:15px;background:#e6f7ff;border-radius:8px}
-    .hidden{display:none}
+    #output,#uploadResult{margin-top:15px;padding:15px;background:#e6f7ff;border-radius:8px}
   </style>
 </head>
 <body>
@@ -27,8 +26,8 @@
 
   <main>
     <div class="card">
-      <h2>Worker Portal (Free)</h2>
-      <input type="text" id="workerName" placeholder="Your name (e.g. Arjun)" />
+      <h2>Worker Portal</h2>
+      <input type="text" id="workerName" placeholder="Your name" />
       <input type="text" id="speechInput" placeholder="Say or type: 2 butter chicken…" />
       <button id="voiceBtn">🎤 Hold to Speak</button>
       <button id="sendBtn">Log Order</button>
@@ -36,7 +35,7 @@
     </div>
 
     <div class="card">
-      <h2>Manager – Upload Today’s Menu (Photo/PDF)</h2>
+      <h2>Manager – Upload Menu</h2>
       <input type="file" id="menuFile" accept="image/*,.pdf" />
       <button id="uploadMenuBtn">Parse & Update Menu</button>
       <div id="uploadResult"></div>
@@ -46,49 +45,62 @@
 <script>
 const SUPABASE_URL = "https://btxevaguugwvnjtniand.supabase.co"
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0eGV2YWd1dWd3dm5qdG5pYW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MzYxOTAsImV4cCI6MjA4MDQxMjE5MH0.R2zJnMQPLmOiWtpfz94HBtoZwksF7p6Ynj6BlGHgCMo"
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-let recognition, isListening = false
 
-// Load today’s tally
+let client = null
+
+// Wait for Supabase library to load
+window.addEventListener('load', () => {
+  if (window.supabase) {
+    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    console.log('Supabase client ready')
+    refreshTally()
+  } else {
+    console.error('Supabase library failed to load')
+  }
+})
+
+// Refresh today's tally
 async function refreshTally() {
+  if (!client) return
   const today = new Date().toISOString().slice(0,10)
-  const { data } = await supabase.from('orders').select('revenue').gte('timestamp', today)
-  const total = data ? data.reduce((a,b)=>a+(b.revenue||0),0) : 0
+  const { data } = await client.from('orders').select('revenue').gte('timestamp', today)
+  const total = data ? data.reduce((a,b) => a + (b.revenue || 0), 0) : 0
   const count = data ? data.length : 0
   document.getElementById('tally').textContent = `Today: ${count} orders • ₹${total}`
 }
-refreshTally()
-setInterval(refreshTally, 10000)
+setInterval(() => client && refreshTally(), 10000)
 
 // Voice recognition
+let recognition, isListening = false
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)()
   recognition.lang = 'en-IN'
   recognition.continuous = false
   recognition.interimResults = true
-
-  recognition.onresult = e => {
-    document.getElementById('speechInput').value = e.results[0][0].transcript
-  }
-  document.getElementById('voiceBtn').addEventListener('mousedown', ()=>{isListening=true; recognition.start()})
-  document.getElementById('voiceBtn').addEventListener('mouseup', ()=>{if(isListening)recognition.stop()})
-  document.getElementById('voiceBtn').addEventListener('touchstart', e=>{e.preventDefault();isListening=true;recognition.start()})
-  document.getElementById('voiceBtn').addEventListener('touchend', e=>{e.preventDefault();if(isListening)recognition.stop()})
+  recognition.onresult = e => document.getElementById('speechInput').value = e.results[0][0].transcript
+  document.getElementById('voiceBtn').addEventListener('mousedown', () => { isListening=true; recognition.start() })
+  document.getElementById('voiceBtn').addEventListener('mouseup', () => { if(isListening) recognition.stop() })
+  document.getElementById('voiceBtn').addEventListener('touchstart', e => { e.preventDefault(); isListening=true; recognition.start() })
+  document.getElementById('voiceBtn').addEventListener('touchend', e => { e.preventDefault(); if(isListening) recognition.stop() })
 }
 
-// Send order
+// Log order
 document.getElementById('sendBtn').onclick = async () => {
   const worker = document.getElementById('workerName').value.trim()
   const text = document.getElementById('speechInput').value.trim()
-  if (!worker || !text) return alert("Enter name & order")
-  
+  if (!worker || !text) return alert("Fill name & order")
+  if (!client) return alert("Still loading… wait 5 seconds")
+
   const res = await fetch("https://btxevaguugwvnjtniand.supabase.co/functions/v1/smartOrder", {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({workerName: worker, text})
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+    },
+    body: JSON.stringify({ workerName: worker, text })
   })
   const json = await res.json()
-  document.getElementById('output').textContent = json.message || json.error
+  document.getElementById('output').textContent = json.message || json.error || "Error"
   if (json.success) {
     document.getElementById('speechInput').value = ""
     refreshTally()
@@ -98,23 +110,22 @@ document.getElementById('sendBtn').onclick = async () => {
 // Upload menu
 document.getElementById('uploadMenuBtn').onclick = async () => {
   const file = document.getElementById('menuFile').files[0]
-  if (!file) return alert("Select a file")
-  const base64 = await fileToBase64(file)
-  const res = await fetch("https://btxevaguugwvnjtniand.supabase.co/functions/v1/uploadMenu", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({base64, fileName: file.name})
-  })
-  const json = await res.json()
-  document.getElementById('uploadResult').textContent = json.message || json.error
-}
-function fileToBase64(file) {
-  return new Promise((resolve,reject)=>{
+  if (!file) return alert("Choose a file")
+  const base64 = await new Promise(resolve => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result.split(',')[1])
-    reader.onerror = reject
     reader.readAsDataURL(file)
   })
+  const res = await fetch("https://btxevaguugwvnjtniand.supabase.co/functions/v1/uploadMenu", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+    },
+    body: JSON.stringify({ base64, fileName: file.name })
+  })
+  const json = await res.json()
+  document.getElementById('uploadResult').textContent = json.message || json.error || "Error"
 }
 </script>
 </body>

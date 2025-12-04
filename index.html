@@ -6,39 +6,63 @@
   <title>ServeGain – Smart Kitchen Assistant</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body{font-family:system-ui,sans-serif;background:#f8f9fa;margin:0;padding:0}
-    header{background:#1a1a1a;color:white;padding:12px;text-align:center;position:fixed;top:0;width:100%;z-index:10}
-    #tally{font-size:18px;font-weight:bold}
-    main{margin-top:70px;padding:20px}
-    .card{background:white;border-radius:12px;padding:20px;margin:15px 0;box-shadow:0 4px 12px rgba(0,0,0,0.1)}
-    input,button{font-size:18px;padding:12px;border-radius:8px;border:1px solid #ddd;width:100%;margin:8px 0}
-    button{background:#0066ff;color:white;border:none;cursor:pointer}
+    body{font-family:system-ui,sans-serif;background:#f8f9fa;margin:0;padding:0;color:#333}
+    header{background:#1a1a1a;color:white;padding:15px;text-align:center;position:fixed;top:0;width:100%;z-index:10}
+    #tally{font-size:19px;font-weight:bold}
+    main{margin-top:80px;padding:20px}
+    .card{background:white;border-radius:16px;padding:22px;margin:15px 0;box-shadow:0 6px 20px rgba(0,0,0,0.1)}
+    input,select,button{font-size:19px;padding:14px;border-radius:12px;border:1px solid #ddd;width:100%;margin:10px 0}
+    button{background:#0066ff;color:white;border:none;cursor:pointer;font-weight:bold}
     button:active{transform:scale(0.98)}
-    #voiceBtn{background:#ff4444}
-    #output,#uploadResult{margin-top:15px;padding:15px;background:#e6f7ff;border-radius:8px}
+    #voiceBtn{background:#ff4444;border-radius:50%;width:70px;height:70px;font-size:30px}
+    #output,#uploadResult,#menuStatus{margin-top:15px;padding:18px;background:#e6f7ff;border-radius:12px;font-size:18px}
+    table{width:100%;border-collapse:collapse;margin:15px 0}
+    th,td{border:1px solid #ddd;padding:12px;text-align:left}
+    th{background:#f0f0f0}
+    .delete-btn{background:#ff4444;padding:8px 12px;border-radius:8px;color:white;cursor:pointer}
+    .add-row{background:#00aa00 !important}
   </style>
 </head>
 <body>
   <header>
-    <div>ServeGain</div>
+    <div style="font-size:24px;font-weight:bold">ServeGain</div>
     <div id="tally">Today: 0 orders • ₹0</div>
   </header>
 
   <main>
+    <!-- Worker Portal -->
     <div class="card">
       <h2>Worker Portal</h2>
       <input type="text" id="workerName" placeholder="Your name" />
-      <input type="text" id="speechInput" placeholder="Say or type: 2 butter chicken…" />
-      <button id="voiceBtn">🎤 Hold to Speak</button>
-      <button id="sendBtn">Log Order</button>
+      <input type="text" id="menuSearch" placeholder="🔍 Search menu..." autocomplete="off">
+      <div id="menuResults" style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:8px"></div>
+      <input type="text" id="speechInput" placeholder="Say: do butter chicken, teen samosa…" />
+      <div style="display:flex;gap:10px;margin:15px 0">
+        <button id="voiceBtn">🎤</button>
+        <button id="sendBtn" style="flex:1">Log Order</button>
+      </div>
       <div id="output"></div>
     </div>
 
+    <!-- Manager Tools -->
     <div class="card">
-      <h2>Manager – Upload Menu</h2>
-      <input type="file" id="menuFile" accept="image/*,.pdf" />
-      <button id="uploadMenuBtn">Parse & Update Menu</button>
+      <h2>Manager Tools</h2>
+      <button onclick="toggleMenuEditor()">✏️ Edit Current Menu</button>
+      <button id="uploadMenuBtn">📸 Upload New Menu (Photo/PDF)</button>
+      <input type="file" id="menuFile" accept="image/*,.pdf" style="display:none" />
       <div id="uploadResult"></div>
+
+      <!-- Editable Menu Table -->
+      <div id="menuEditor" style="display:none;margin-top:20px">
+        <h3>Edit Menu Items</h3>
+        <button onclick="addMenuRow()" class="add-row">+ Add New Item</button>
+        <table id="menuTable">
+          <thead><tr><th>Item Name</th><th>Price (₹)</th><th>Action</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button onclick="saveMenu()" style="background:#00aa00;margin-top:15px">💾 Save Menu</button>
+        <div id="menuStatus"></div>
+      </div>
     </div>
   </main>
 
@@ -47,41 +71,62 @@ const SUPABASE_URL = "https://btxevaguugwvnjtniand.supabase.co"
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0eGV2YWd1dWd3dm5qdG5pYW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MzYxOTAsImV4cCI6MjA4MDQxMjE5MH0.R2zJnMQPLmOiWtpfz94HBtoZwksF7p6Ynj6BlGHgCMo"
 
 let client = null
+let menuItems = []
 
-// Wait for Supabase library to load
 window.addEventListener('load', () => {
-  if (window.supabase) {
-    client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-    console.log('Supabase client ready')
-    refreshTally()
-  } else {
-    console.error('Supabase library failed to load')
-  }
+  client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  loadMenu()
+  refreshTally()
+  setInterval(refreshTally, 10000)
 })
 
-// Refresh today's tally
+async function loadMenu() {
+  const { data } = await client.from('menu').select('*').order('name')
+  menuItems = data || []
+  updateMenuDropdown()
+}
+
 async function refreshTally() {
   if (!client) return
   const today = new Date().toISOString().slice(0,10)
   const { data } = await client.from('orders').select('revenue').gte('timestamp', today)
-  const total = data ? data.reduce((a,b) => a + (b.revenue || 0), 0) : 0
-  const count = data ? data.length : 0
+  const total = data?.reduce((a,b) => a + (b.revenue || 0), 0) || 0
+  const count = data?.length || 0
   document.getElementById('tally').textContent = `Today: ${count} orders • ₹${total}`
 }
-setInterval(() => client && refreshTally(), 10000)
 
-// Voice recognition
+// Searchable menu
+document.getElementById('menuSearch').addEventListener('input', e => {
+  const query = e.target.value.toLowerCase()
+  const results = document.getElementById('menuResults')
+  if (!query) { results.innerHTML = ''; return }
+  const matches = menuItems.filter(m => m.name.toLowerCase().includes(query)).slice(0,10)
+  results.innerHTML = matches.map(m => 
+    `<div class="menu-item" onclick="selectItem('${m.name}')">${m.name} – ₹${m.price}</div>`
+  ).join('') || '<div style="padding:15px;color:#666">No items found</div>'
+})
+window.selectItem = name => {
+  document.getElementById('speechInput').value = `1 ${name}`
+  document.getElementById('menuSearch').value = ''
+  document.getElementById('menuResults').innerHTML = ''
+}
+
+// Voice (hi-IN = perfect Indian accent)
 let recognition, isListening = false
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)()
-  recognition.lang = 'en-IN'
-  recognition.continuous = false
+  recognition.lang = 'hi-IN'
+  recognition.continuous = true
   recognition.interimResults = true
-  recognition.onresult = e => document.getElementById('speechInput').value = e.results[0][0].transcript
-  document.getElementById('voiceBtn').addEventListener('mousedown', () => { isListening=true; recognition.start() })
-  document.getElementById('voiceBtn').addEventListener('mouseup', () => { if(isListening) recognition.stop() })
-  document.getElementById('voiceBtn').addEventListener('touchstart', e => { e.preventDefault(); isListening=true; recognition.start() })
-  document.getElementById('voiceBtn').addEventListener('touchend', e => { e.preventDefault(); if(isListening) recognition.stop() })
+  recognition.onresult = e => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('')
+    document.getElementById('speechInput').value = transcript
+  }
+  const btn = document.getElementById('voiceBtn')
+  btn.addEventListener('mousedown', () => { isListening=true; recognition.start(); btn.style.background='#ff0000' })
+  btn.addEventListener('mouseup', () => { recognition.stop(); btn.style.background='#ff4444' })
+  btn.addEventListener('touchstart', e => { e.preventDefault(); recognition.start(); btn.style.background='#ff0000' })
+  btn.addEventListener('touchend', e => { e.preventDefault(); recognition.stop(); btn.style.background='#ff4444' })
 }
 
 // Log order
@@ -89,43 +134,81 @@ document.getElementById('sendBtn').onclick = async () => {
   const worker = document.getElementById('workerName').value.trim()
   const text = document.getElementById('speechInput').value.trim()
   if (!worker || !text) return alert("Fill name & order")
-  if (!client) return alert("Still loading… wait 5 seconds")
-
   const res = await fetch("https://btxevaguugwvnjtniand.supabase.co/functions/v1/smartOrder", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-    },
-    body: JSON.stringify({ workerName: worker, text })
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({workerName: worker, text})
   })
   const json = await res.json()
   document.getElementById('output').textContent = json.message || json.error || "Error"
   if (json.success) {
     document.getElementById('speechInput').value = ""
     refreshTally()
+    loadMenu()
   }
 }
 
 // Upload menu
 document.getElementById('uploadMenuBtn').onclick = async () => {
+  document.getElementById('menuFile').click()
+}
+document.getElementById('menuFile').onchange = async () => {
   const file = document.getElementById('menuFile').files[0]
-  if (!file) return alert("Choose a file")
-  const base64 = await new Promise(resolve => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result.split(',')[1])
-    reader.readAsDataURL(file)
-  })
+  if (!file) return
+  const base64 = await new Promise(r => { const reader = new FileReader(); reader.onload = () => r(reader.result.split(',')[1]); reader.readAsDataURL(file) })
   const res = await fetch("https://btxevaguugwvnjtniand.supabase.co/functions/v1/uploadMenu", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-    },
-    body: JSON.stringify({ base64, fileName: file.name })
+    method:"POST",
+    headers:{ "Content-Type":"application/json", "Authorization": `Bearer ${SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({base64, fileName: file.name})
   })
   const json = await res.json()
-  document.getElementById('uploadResult').textContent = json.message || json.error || "Error"
+  document.getElementById('uploadResult').textContent = json.message || json.error
+  if (json.success) loadMenu()
+}
+
+// Editable Menu
+function toggleMenuEditor() {
+  const editor = document.getElementById('menuEditor')
+  editor.style.display = editor.style.display === 'block' ? 'none' : 'block'
+  if (editor.style.display === 'block') renderMenuTable()
+}
+
+function renderMenuTable() {
+  const tbody = document.querySelector('#menuTable tbody')
+  tbody.innerHTML = ''
+  menuItems.forEach((item, i) => {
+    const row = document.createElement('tr')
+    row.innerHTML = `
+      <td><input value="${item.name}" data-id="${i}" data-field="name"></td>
+      <td><input type="number" value="${item.price}" data-id="${i}" data-field="price" style="width:100px"></td>
+      <td><button class="delete-btn" onclick="deleteMenuItem(${i})">Delete</button></td>
+    `
+    tbody.appendChild(row)
+  })
+}
+
+function addMenuRow() {
+  menuItems.push({ name: "New Item", price: 50, margin: 0.45, keywords: "new item" })
+  renderMenuTable()
+}
+
+window.deleteMenuItem = i => {
+  menuItems.splice(i, 1)
+  renderMenuTable()
+}
+
+async function saveMenu() {
+  const rows = document.querySelectorAll('#menuTable tbody tr')
+  const updated = []
+  rows.forEach(row => {
+    const name = row.querySelector('[data-field="name"]').value.trim()
+    const price = parseInt(row.querySelector('[data-field="price"]').value) || 0
+    if (name && price > 0) updated.push({ name, price, margin: 0.45, keywords: name.toLowerCase() })
+  })
+  await client.from('menu').delete().neq('id', 0)
+  await client.from('menu').insert(updated)
+  document.getElementById('menuStatus').textContent = `Menu saved! ${updated.length} items updated.`
+  loadMenu()
 }
 </script>
 </body>
